@@ -6,6 +6,8 @@ from scenes.login import LoginScene
 from scenes.menu import MenuScene
 from scenes.game import GameScene
 from scenes.saves import SavesScene
+from scenes.character_select import CharacterSelectScene
+from scenes.map_select import MapSelectScene
 from save_manager import SaveManager
 
 
@@ -99,11 +101,15 @@ def main():
 	login = LoginScene(screen, save_mgr)
 	menu = MenuScene(screen, save_mgr)
 	game = GameScene(screen, save_mgr)
+	character = CharacterSelectScene(screen, save_mgr)
+	map_scene = MapSelectScene(screen, save_mgr)
 	saves = SavesScene(screen, save_mgr)
 
 	manager.register('login', login)
 	manager.register('menu', menu)
 	manager.register('game', game)
+	manager.register('character_select', character)
+	manager.register('map_select', map_scene)
 	manager.register('saves', saves)
 
 	manager.goto('login')

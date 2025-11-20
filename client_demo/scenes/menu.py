@@ -22,7 +22,9 @@ class MenuScene(BaseScene):
                 rect = pygame.Rect(300, 200 + idx * 60, 200, 44)
                 if rect.collidepoint((mx, my)):
                     if name == 'start':
-                        self.manager.goto('game', new=True)
+                        # go to character selection first, then map, then game
+                        # forward username so later scenes can show player name
+                        self.manager.goto('character_select', username=getattr(self, 'username', 'Guest'))
                     elif name == 'continue':
                         latest = self.save_mgr.get_latest_save()
                         if latest:
