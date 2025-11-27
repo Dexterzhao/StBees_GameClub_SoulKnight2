@@ -1,1 +1,4 @@
 *.pyc
+*.pyc
+*.pyc
+/client_demo/scenes/__pycache__
