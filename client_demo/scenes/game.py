@@ -14,8 +14,13 @@ class GameScene(BaseScene):
         self.running = False
 
         # player controlled entity
-        self.player = {'pos': [400.0, 300.0], 'speed': 220.0}
-        self._move = {'left': False, 'right': False, 'up': False, 'down': False}
+        # support for one or two players
+        self.players = [
+            {'pos': [400.0, 300.0], 'speed': 220.0, 'fire_cooldown': 0.4, 'fire_timer': 0.0, 'hp': 100, 'name': 'Player1', 'ult_charge': 0, 'ult_max': 100, 'ult_active': False, 'ult_timer': 0.0},
+        ]
+        self._move = [
+            {'left': False, 'right': False, 'up': False, 'down': False},
+        ]
 
         # enemies (simple moving targets)
         self.enemies = []
@@ -43,16 +48,38 @@ class GameScene(BaseScene):
         if kwargs.get('save'):
             self.state = kwargs['save']
 
-        # start running only when player_count >= 30
-        self.running = self.player_count >= 30
+        # start running immediately when entering the game (no waiting screen)
+        self.running = True
         # character data
         self.character = kwargs.get('character')
         self.character_label = kwargs.get('character_label', getattr(self, 'character', 'Player'))
         # player display name (from login/menu) — show above player
         self.player_name = kwargs.get('username', getattr(self, 'player_name', 'Player'))
+        # 2-player data
+        self.players = kwargs.get('players', None) or self.players
+        # if players passed as list, initialize their positions and names
+        if isinstance(self.players, list) and len(self.players) > 0 and isinstance(self.players[0], dict) and 'character' in self.players[0]:
+            # convert incoming players format to internal player dicts
+            new_players = []
+            new_moves = []
+            for i, p in enumerate(self.players):
+                pos = [200.0 + i * 400.0, 300.0]
+                new_players.append({'pos': pos, 'speed': 220.0, 'fire_cooldown': 0.4, 'fire_timer': 0.0, 'hp': 100, 'name': p.get('username', f'Player{i+1}'), 'character': p.get('character')} )
+                    # add ultimate fields
+                    new_players[-1].update({'ult_charge': 0, 'ult_max': 100, 'ult_active': False, 'ult_timer': 0.0})
+                new_moves.append({'left': False, 'right': False, 'up': False, 'down': False})
+            self.players = new_players
+            self._move = new_moves
+        # ensure a convenient reference to the primary player (player 0)
+        if isinstance(self.players, list) and len(self.players) > 0:
+            self.player = self.players[0]
+        else:
+            # fallback single-player structure
+            self.player = {'pos': [400.0, 300.0], 'hp': 100, 'max_hp': 100}
         # health
-        self.max_hp = int(kwargs.get('max_hp', 100))
-        self.hp = int(kwargs.get('hp', self.max_hp))
+        # prefer incoming kwargs, otherwise use primary player's stats
+        self.max_hp = int(kwargs.get('max_hp', self.player.get('max_hp', 100)))
+        self.hp = int(kwargs.get('hp', self.player.get('hp', self.max_hp)))
         # hurt cooldown (seconds) to avoid instant repeated damage
         self._hurt_cooldown = 0.0
         # death timer after hp <= 0
@@ -141,46 +168,82 @@ class GameScene(BaseScene):
                 if not self.running and self.player_count >= 30:
                     self.running = True
                     self._start_game()
+            # single-player fire and movement mapped to player 0
             if event.key == pygame.K_SPACE:
-                # fire
-                self._fire_bullet()
-            # movement keys
-            if event.key in (pygame.K_a, pygame.K_LEFT):
-                self._move['left'] = True
-            if event.key in (pygame.K_d, pygame.K_RIGHT):
-                self._move['right'] = True
-            if event.key in (pygame.K_w, pygame.K_UP):
-                self._move['up'] = True
-            if event.key in (pygame.K_s, pygame.K_DOWN):
-                self._move['down'] = True
+                # fire for player 0
+                self._fire_bullet(0)
+            # ultimate activation for player 0 (R)
+            if event.key == pygame.K_r:
+                self._activate_ult(0)
+            # movement keys for player 0 (WASD)
+            if event.key in (pygame.K_a,):
+                self._move[0]['left'] = True
+            if event.key in (pygame.K_d,):
+                self._move[0]['right'] = True
+            if event.key in (pygame.K_w,):
+                self._move[0]['up'] = True
+            if event.key in (pygame.K_s,):
+                self._move[0]['down'] = True
+            # second player controls - arrows and RCTRL for fire
+            if len(self.players) > 1:
+                if event.key == pygame.K_KP_ENTER or event.key == pygame.K_RETURN:
+                    # treat Enter as player2 fire as well
+                    self._fire_bullet(1)
+                    # player2 ultimate activation (Right Ctrl)
+                    if event.key == pygame.K_RCTRL:
+                        self._activate_ult(1)
+                if event.key in (pygame.K_LEFT,):
+                    self._move[1]['left'] = True
+                if event.key in (pygame.K_RIGHT,):
+                    self._move[1]['right'] = True
+                if event.key in (pygame.K_UP,):
+                    self._move[1]['up'] = True
+                if event.key in (pygame.K_DOWN,):
+                    self._move[1]['down'] = True
 
         if event.type == pygame.KEYUP:
-            if event.key in (pygame.K_a, pygame.K_LEFT):
-                self._move['left'] = False
-            if event.key in (pygame.K_d, pygame.K_RIGHT):
-                self._move['right'] = False
-            if event.key in (pygame.K_w, pygame.K_UP):
-                self._move['up'] = False
-            if event.key in (pygame.K_s, pygame.K_DOWN):
-                self._move['down'] = False
+            # player 0 keys
+            if event.key in (pygame.K_a,):
+                self._move[0]['left'] = False
+            if event.key in (pygame.K_d,):
+                self._move[0]['right'] = False
+            if event.key in (pygame.K_w,):
+                self._move[0]['up'] = False
+            if event.key in (pygame.K_s,):
+                self._move[0]['down'] = False
+            # player 1 keys
+            if len(self.players) > 1:
+                if event.key in (pygame.K_LEFT,):
+                    self._move[1]['left'] = False
+                if event.key in (pygame.K_RIGHT,):
+                    self._move[1]['right'] = False
+                if event.key in (pygame.K_UP,):
+                    self._move[1]['up'] = False
+                if event.key in (pygame.K_DOWN,):
+                    self._move[1]['down'] = False
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             self._fire_bullet()
 
-    def _fire_bullet(self):
-        # respect player fire cooldown
-        if getattr(self, '_player_fire_timer', 0.0) > 0.0:
+    def _fire_bullet(self, player_idx=0):
+        # fire for specific player index
+        if player_idx < 0 or player_idx >= len(self.players):
+            return
+        player = self.players[player_idx]
+        # respect per-player fire timer
+        if player.get('fire_timer', 0.0) > 0.0:
             return
         # limit bullets
         if len(self.bullets) >= self.max_bullets:
             return
         # create bullet at player position
-        bx, by = self.player['pos']
+        bx, by = player['pos']
         b = {
             'pos': [bx, by],
             'vel': [0.0, -1.0],
             'speed': 200.0,  # moderate speed
             'target': self._find_nearest_enemy((bx, by)),
+            'owner': player_idx,
         }
         # initialize velocity towards target if exists
         if b['target']:
@@ -193,7 +256,35 @@ class GameScene(BaseScene):
             b['vel'] = [0.0, -1.0]
         self.bullets.append(b)
         # set cooldown
-        self._player_fire_timer = self.player_fire_cooldown
+        player['fire_timer'] = player.get('fire_cooldown', 0.4)
+
+    def _activate_ult(self, player_idx=0):
+        # Activate ultimate for a player: spawn radial high-damage bullets
+        if player_idx < 0 or player_idx >= len(self.players):
+            return
+        p = self.players[player_idx]
+        if p.get('ult_active'):
+            return
+        if p.get('ult_charge', 0) < p.get('ult_max', 100):
+            return
+        # consume charge and activate
+        p['ult_charge'] = 0
+        p['ult_active'] = True
+        p['ult_timer'] = 3.0
+        # spawn a radial burst of ult bullets
+        px, py = p['pos']
+        n = 12
+        for i in range(n):
+            ang = 2 * math.pi * i / n
+            b = {
+                'pos': [px, py],
+                'vel': [math.cos(ang), math.sin(ang)],
+                'speed': 320.0,
+                'ult': True,
+                'owner': player_idx,
+                'target': None,
+            }
+            self.bullets.append(b)
 
     def _find_nearest_enemy(self, pos):
         if not self.enemies:
@@ -209,6 +300,22 @@ class GameScene(BaseScene):
                 best = e
         return best
 
+    def _find_nearest_player(self, pos):
+        if not self.players:
+            return None
+        bx, by = pos
+        best = None
+        bestd = float('inf')
+        best_idx = 0
+        for i, p in enumerate(self.players):
+            px, py = p['pos']
+            d = (px - bx) ** 2 + (py - by) ** 2
+            if d < bestd:
+                bestd = d
+                best = p
+                best_idx = i
+        return best, best_idx
+
     def update(self, dt):
         # lobby waiting
         if not self.running:
@@ -216,26 +323,28 @@ class GameScene(BaseScene):
             # self.player_count += dt * 0  # keep stable unless user presses A
             return
 
-        # update player movement
-        dx = 0
-        dy = 0
-        if self._move['left']:
-            dx -= 1
-        if self._move['right']:
-            dx += 1
-        if self._move['up']:
-            dy -= 1
-        if self._move['down']:
-            dy += 1
-        if dx != 0 or dy != 0:
-            mag = math.hypot(dx, dy)
-            dx /= mag
-            dy /= mag
-            self.player['pos'][0] += dx * self.player['speed'] * dt
-            self.player['pos'][1] += dy * self.player['speed'] * dt
-            # clamp
-            self.player['pos'][0] = max(8, min(792, self.player['pos'][0]))
-            self.player['pos'][1] = max(8, min(592, self.player['pos'][1]))
+        # update player movements for all players
+        for idx, p in enumerate(self.players):
+            mv = self._move[idx]
+            dx = 0
+            dy = 0
+            if mv.get('left'):
+                dx -= 1
+            if mv.get('right'):
+                dx += 1
+            if mv.get('up'):
+                dy -= 1
+            if mv.get('down'):
+                dy += 1
+            if dx != 0 or dy != 0:
+                mag = math.hypot(dx, dy)
+                dx /= mag
+                dy /= mag
+                p['pos'][0] += dx * p.get('speed', 220.0) * dt
+                p['pos'][1] += dy * p.get('speed', 220.0) * dt
+                # clamp
+                p['pos'][0] = max(8, min(792, p['pos'][0]))
+                p['pos'][1] = max(8, min(592, p['pos'][1]))
 
         # update enemies
         for e in self.enemies:
@@ -254,7 +363,12 @@ class GameScene(BaseScene):
                     if e.get('is_boss'):
                                 # boss fires a light-blue larger homing bullet that deals heavy damage
                                 bx, by = e['pos']
-                                px, py = self.player['pos']
+                                # target nearest player
+                                tgt, _ = self._find_nearest_player((bx, by)) or (None, None)
+                                if tgt:
+                                    px, py = tgt['pos']
+                                else:
+                                    px, py = self.player['pos']
                                 dx = px - bx
                                 dy = py - by
                                 dist = math.hypot(dx, dy) or 1.0
@@ -272,7 +386,11 @@ class GameScene(BaseScene):
                     else:
                         # regular enemy fires a purple bullet toward player
                         bx, by = e['pos']
-                        px, py = self.player['pos']
+                        tgt, _ = self._find_nearest_player((bx, by)) or (None, None)
+                        if tgt:
+                            px, py = tgt['pos']
+                        else:
+                            px, py = self.player['pos']
                         dx = px - bx
                         dy = py - by
                         dist = math.hypot(dx, dy) or 1.0
@@ -310,7 +428,11 @@ class GameScene(BaseScene):
                     e['special_timer'] = e.get('special_timer', 5.0) - dt
                     if e['special_timer'] <= 0:
                         bx, by = e['pos']
-                        px, py = self.player['pos']
+                        tgt, _ = self._find_nearest_player((bx, by)) or (None, None)
+                        if tgt:
+                            px, py = tgt['pos']
+                        else:
+                            px, py = self.player['pos']
                         base_ang = math.atan2(py - by, px - bx)
                         n = 8
                         step = 2 * math.pi / n
@@ -367,8 +489,9 @@ class GameScene(BaseScene):
                 ex, ey = e['pos']
                 bx, by = b['pos']
                 if math.hypot(ex - bx, ey - by) < 14:
-                    # apply damage to enemy
-                    e['hp'] = e.get('hp', 1) - 1
+                    # apply damage to enemy (ult bullets do more damage)
+                    dmg = 5 if b.get('ult') else 1
+                    e['hp'] = e.get('hp', 1) - dmg
                     if e['hp'] <= 0:
                         # if this was a boss, handle phase transition or killed
                         if e.get('is_boss'):
@@ -407,6 +530,12 @@ class GameScene(BaseScene):
                         else:
                             try:
                                 self.enemies.remove(e)
+                                # award ult charge to the owner of the bullet
+                                owner_idx = b.get('owner')
+                                if owner_idx is not None and 0 <= owner_idx < len(self.players):
+                                    p_owner = self.players[owner_idx]
+                                    gain = 20
+                                    p_owner['ult_charge'] = min(p_owner.get('ult_max', 100), p_owner.get('ult_charge', 0) + gain)
                             except ValueError:
                                 pass
                     # remove bullet on hit
@@ -451,55 +580,74 @@ class GameScene(BaseScene):
             if bx < -20 or bx > 820 or by < -20 or by > 620:
                 eb_remove.append(eb)
                 continue
-            # collision with player
-            px, py = self.player['pos']
-            if math.hypot(px - bx, py - by) < 12:
-                # boss bullets deal heavy damage, regular enemy bullets deal 2 HP
-                if eb.get('boss_bullet'):
-                    self.hp -= 20
-                else:
-                    self.hp -= 2
-                eb_remove.append(eb)
+            # collision with players (support multi-player)
+            hit = False
+            for i, p in enumerate(self.players):
+                px, py = p['pos']
+                if math.hypot(px - bx, py - by) < 12:
+                    # boss bullets deal heavy damage, regular enemy bullets deal 2 HP
+                    dmg = 20 if eb.get('boss_bullet') else 2
+                    p['hp'] = max(0, p.get('hp', 0) - dmg)
+                    # if primary player got hit, keep compatibility fields
+                    if i == 0:
+                        self.hp = p['hp']
+                    eb_remove.append(eb)
+                    hit = True
+                    break
+            if hit:
+                continue
 
         for eb in eb_remove:
             if eb in self.enemy_bullets:
                 self.enemy_bullets.remove(eb)
 
-        # update player fire timer
-        if getattr(self, '_player_fire_timer', 0.0) > 0.0:
-            self._player_fire_timer = max(0.0, self._player_fire_timer - dt)
+        # update per-player fire timers
+        for p in self.players:
+            if p.get('fire_timer', 0.0) > 0.0:
+                p['fire_timer'] = max(0.0, p['fire_timer'] - dt)
+            # update ult timers
+            if p.get('ult_active'):
+                p['ult_timer'] = max(0.0, p.get('ult_timer', 0.0) - dt)
+                if p['ult_timer'] <= 0.0:
+                    p['ult_active'] = False
 
         # update hurt cooldown
         if self._hurt_cooldown > 0:
             self._hurt_cooldown = max(0.0, self._hurt_cooldown - dt)
 
-        # check collisions between player and enemies
-        if self.running and self.hp > 0:
-            px, py = self.player['pos']
-            for e in list(self.enemies):
-                ex, ey = e['pos']
-                if math.hypot(ex - px, ey - py) < 20:
-                    # collision
-                    if self._hurt_cooldown <= 0.0:
-                        dmg = 10
-                        self.hp -= dmg
-                        self._hurt_cooldown = 1.0
-                        # remove the enemy on collision to avoid repeated hits
-                        try:
-                            self.enemies.remove(e)
-                        except ValueError:
-                            pass
-                        # simple knockback
-                        dx = px - ex
-                        dy = py - ey
-                        mag = math.hypot(dx, dy) or 1.0
-                        self.player['pos'][0] += (dx / mag) * 10
-                        self.player['pos'][1] += (dy / mag) * 10
-                        # clamp
-                        self.player['pos'][0] = max(8, min(792, self.player['pos'][0]))
-                        self.player['pos'][1] = max(8, min(592, self.player['pos'][1]))
-                    # break so we process one collision per frame
-                    break
+        # check collisions between enemies and players (support multi-player)
+        if self.running:
+            for i, p in enumerate(self.players):
+                if p.get('hp', 0) <= 0:
+                    continue
+                px, py = p['pos']
+                for e in list(self.enemies):
+                    ex, ey = e['pos']
+                    if math.hypot(ex - px, ey - py) < 20:
+                        # collision
+                        if self._hurt_cooldown <= 0.0:
+                            dmg = 10
+                            p['hp'] = max(0, p.get('hp', 0) - dmg)
+                            self._hurt_cooldown = 1.0
+                            # remove the enemy on collision to avoid repeated hits
+                            try:
+                                self.enemies.remove(e)
+                            except ValueError:
+                                pass
+                            # simple knockback applied to the collided player
+                            dx = px - ex
+                            dy = py - ey
+                            mag = math.hypot(dx, dy) or 1.0
+                            p['pos'][0] += (dx / mag) * 10
+                            p['pos'][1] += (dy / mag) * 10
+                            # clamp
+                            p['pos'][0] = max(8, min(792, p['pos'][0]))
+                            p['pos'][1] = max(8, min(592, p['pos'][1]))
+                            # keep primary player hp in sync
+                            if i == 0:
+                                self.hp = p['hp']
+                        # break so we process one collision per frame for this player
+                        break
 
         # if player died, start death timer and stop running
         if self.hp <= 0 and self._death_timer is None:
@@ -547,22 +695,36 @@ class GameScene(BaseScene):
             return
 
         surface.fill((10, 40, 10))
-        # draw player
-        px, py = self.player['pos']
-        pygame.draw.circle(surface, (50, 160, 220), (int(px), int(py)), 12)
-
-        # draw player name and hp bar above player
-        name_surf = self.font.render(self.player_name, True, (255, 255, 255))
-        nsr = name_surf.get_rect(center=(int(px), int(py) - 26))
-        surface.blit(name_surf, nsr)
-        # hp bar
-        bar_w = 60
-        bar_h = 8
-        hp_frac = max(0.0, min(1.0, float(self.hp) / float(self.max_hp)))
-        bar_x = int(px - bar_w/2)
-        bar_y = int(py - 16)
-        pygame.draw.rect(surface, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
-        pygame.draw.rect(surface, (180, 30, 30), (bar_x + 1, bar_y + 1, int((bar_w - 2) * hp_frac), bar_h - 2))
+        # draw players (support split-screen players list)
+        for idx, p in enumerate(self.players):
+            px, py = p['pos']
+            color = (50, 160, 220) if idx == 0 else (80, 200, 120)
+            pygame.draw.circle(surface, color, (int(px), int(py)), 12)
+            # draw player name and hp bar above player
+            name = p.get('name', f'Player{idx+1}')
+            name_surf = self.font.render(name, True, (255, 255, 255))
+            nsr = name_surf.get_rect(center=(int(px), int(py) - 26))
+            surface.blit(name_surf, nsr)
+            # hp bar
+            bar_w = 60
+            bar_h = 8
+            hp = p.get('hp', 100)
+            maxhp = p.get('max_hp', 100)
+            hp_frac = max(0.0, min(1.0, float(hp) / float(maxhp)))
+            bar_x = int(px - bar_w/2)
+            bar_y = int(py - 16)
+            pygame.draw.rect(surface, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
+            pygame.draw.rect(surface, (180, 30, 30), (bar_x + 1, bar_y + 1, int((bar_w - 2) * hp_frac), bar_h - 2))
+            # ult meter under hp bar
+            ult_w = 60
+            ult_h = 6
+            ult_frac = max(0.0, min(1.0, float(p.get('ult_charge', 0)) / float(p.get('ult_max', 100))))
+            ult_x = int(px - ult_w/2)
+            ult_y = int(py - 6)
+            pygame.draw.rect(surface, (30, 30, 30), (ult_x, ult_y, ult_w, ult_h))
+            pygame.draw.rect(surface, (60, 200, 220), (ult_x + 1, ult_y + 1, int((ult_w - 2) * ult_frac), ult_h - 2))
+            if p.get('ult_active'):
+                self.draw_text(surface, 'ULT!', (px, py - 36))
 
         # draw enemies
         for e in self.enemies:

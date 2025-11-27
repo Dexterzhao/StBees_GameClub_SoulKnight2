@@ -14,10 +14,12 @@ class MapSelectScene(BaseScene):
 
     def on_enter(self, **kwargs):
         # accept character selection passed from previous scene
+        # accept character selection or players list passed from previous scene
         self.selected_character = kwargs.get('character')
         self.selected_character_label = kwargs.get('character_label', self.selected_character)
         # keep username forwarded from previous scenes
         self.username = kwargs.get('username', 'Player')
+        self.players = kwargs.get('players')
 
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -27,7 +29,11 @@ class MapSelectScene(BaseScene):
                 if rect.collidepoint((mx, my)):
                     # go to game, pass character and map
                     if self.manager:
-                        self.manager.goto('game', new=True, character=self.selected_character, character_label=self.selected_character_label, map=mid, map_label=label, username=getattr(self, 'username', 'Player'))
+                        if self.players:
+                            # 2-player flow: pass players list into game
+                            self.manager.goto('game', new=True, players=self.players, map=mid, map_label=label)
+                        else:
+                            self.manager.goto('game', new=True, character=self.selected_character, character_label=self.selected_character_label, map=mid, map_label=label, username=getattr(self, 'username', 'Player'))
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 # back to character selection

@@ -7,6 +7,7 @@ class MenuScene(BaseScene):
         super().__init__(screen, save_mgr)
         self.buttons = [
             ('Start New Game', 'start'),
+            ('Start 2P', 'start2'),
             ('Continue', 'continue'),
             ('View Saves', 'saves'),
             ('Exit', 'exit'),
@@ -24,7 +25,10 @@ class MenuScene(BaseScene):
                     if name == 'start':
                         # go to character selection first, then map, then game
                         # forward username so later scenes can show player name
-                        self.manager.goto('character_select', username=getattr(self, 'username', 'Guest'))
+                        self.manager.goto('character_select', username=getattr(self, 'username', 'Guest'), mode=1)
+                    elif name == 'start2':
+                        # 2-player flow: mode=2, forward username as player1
+                        self.manager.goto('character_select', username=getattr(self, 'username', 'Player1'), mode=2)
                     elif name == 'continue':
                         latest = self.save_mgr.get_latest_save()
                         if latest:
