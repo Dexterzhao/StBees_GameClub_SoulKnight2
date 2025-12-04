@@ -16,7 +16,7 @@ class GameScene(BaseScene):
         # player controlled entity
         # support for one or two players
         self.players = [
-            {'pos': [400.0, 300.0], 'speed': 220.0, 'fire_cooldown': 0.4, 'fire_timer': 0.0, 'hp': 100, 'name': 'Player1', 'ult_charge': 0, 'ult_max': 100, 'ult_active': False, 'ult_timer': 0.0},
+            {'pos': [400.0, 300.0], 'speed': 220.0, 'fire_cooldown': 0.4, 'fire_timer': 0.0, 'hp': 100, 'max_hp': 100, 'weapon_power': 1.0, 'name': 'Player1', 'ult_charge': 0, 'ult_max': 100, 'ult_active': False, 'ult_timer': 0.0},
         ]
         self._move = [
             {'left': False, 'right': False, 'up': False, 'down': False},
@@ -40,6 +40,8 @@ class GameScene(BaseScene):
         # player firing cooldown (seconds) - controls player's fire rate
         self.player_fire_cooldown = 0.4
         self._player_fire_timer = 0.0
+        # visual/effect list (explosions etc.)
+        self._effects = []
 
     def on_enter(self, **kwargs):
         # allow passing player_count from outside
@@ -81,6 +83,7 @@ class GameScene(BaseScene):
             new_moves = []
             for i, p in enumerate(self.players):
                 pos = [200.0 + i * 400.0, 300.0]
+<<<<<<< HEAD
                 # set base HP depending on character (mage is squishier)
                 base_char = p.get('character')
                 if base_char == 'mage':
@@ -92,6 +95,11 @@ class GameScene(BaseScene):
                 new_players[-1].update({'ult_charge': 0, 'ult_max': 100, 'ult_active': False, 'ult_timer': 0.0})
                 # mage-specific cooldown for big projectile
                 new_players[-1].update({'mage_cd': 0.0})
+=======
+                new_players.append({'pos': pos, 'speed': 220.0, 'fire_cooldown': 0.4, 'fire_timer': 0.0, 'hp': p.get('hp', 100), 'max_hp': p.get('max_hp', 100), 'weapon_power': p.get('weapon_power', 1.0), 'name': p.get('username', f'Player{i+1}'), 'character': p.get('character')} )
+                # add ultimate fields
+                new_players[-1].update({'ult_charge': 0, 'ult_max': 100, 'ult_active': False, 'ult_timer': 0.0})
+>>>>>>> 304bef83a0de9cb2609fa4448969ddaefee10e83
                 new_moves.append({'left': False, 'right': False, 'up': False, 'down': False})
             self.players = new_players
             self._move = new_moves
@@ -156,17 +164,34 @@ class GameScene(BaseScene):
             by = random.uniform(80, 520)
             boss = {
                 'pos': [bx, by],
-                'vel': [0.0, 0.0],
+                'vel': [random.uniform(-40.0, 40.0), random.uniform(-40.0, 40.0)],
                 'speed': 0.0,
                 'is_boss': True,
-                'hp': 40,  # boss HP (tweakable)
-                'max_hp': 40,
+                'hp': 40 + (self.wave - 1) * 5,  # boss HP increases per wave
+                'max_hp': 40 + (self.wave - 1) * 5,
                 'phase': 1,
                 'fire_timer': 0.8,  # boss fires every 0.8s
                 'summon_timer': 20.0,  # boss summons minions every 20s
                 'special_timer': 5.0,
             }
             self.enemies.append(boss)
+            # if in 2-player mode, spawn a second boss to make encounters harder
+            if self.player_count > 1:
+                bx2 = random.choice([80, 720])
+                by2 = random.uniform(80, 520)
+                boss2 = {
+                    'pos': [bx2, by2],
+                    'vel': [random.uniform(-40.0, 40.0), random.uniform(-40.0, 40.0)],
+                    'speed': 0.0,
+                    'is_boss': True,
+                    'hp': 36 + (self.wave - 1) * 5,
+                    'max_hp': 36 + (self.wave - 1) * 5,
+                    'phase': 1,
+                    'fire_timer': 1.0,
+                    'summon_timer': 20.0,
+                    'special_timer': 6.0,
+                }
+                self.enemies.append(boss2)
             # clear player bullets when boss wave starts
             self.bullets = []
             return
@@ -199,7 +224,7 @@ class GameScene(BaseScene):
                 'speed': random.uniform(24, 48) * speed_scale,
                 # enemy firing cooldown (seconds)
                 'fire_timer': random.uniform(1.0, 3.0),
-                'hp': 1,  # normal enemy dies in one hit
+                'hp': 1 + (self.wave - 1) // 3,  # scale enemy HP slowly by wave
             }
             self.enemies.append(e)
         # clear player bullets when new wave starts
@@ -241,11 +266,11 @@ class GameScene(BaseScene):
             # second player controls - arrows and RCTRL for fire
             if len(self.players) > 1:
                 if event.key == pygame.K_KP_ENTER or event.key == pygame.K_RETURN:
-                    # treat Enter as player2 fire as well
+                    # treat Enter as player2 fire
                     self._fire_bullet(1)
-                    # player2 ultimate activation (Right Ctrl)
-                    if event.key == pygame.K_RCTRL:
-                        self._activate_ult(1)
+                # player2 ultimate activation (Right Ctrl)
+                if event.key == pygame.K_RCTRL:
+                    self._activate_ult(1)
                 if event.key in (pygame.K_LEFT,):
                     self._move[1]['left'] = True
                 if event.key in (pygame.K_RIGHT,):
@@ -309,8 +334,9 @@ class GameScene(BaseScene):
             # shoot upward if no target
             b['vel'] = [0.0, -1.0]
         self.bullets.append(b)
-        # set cooldown
-        player['fire_timer'] = player.get('fire_cooldown', 0.4)
+        # set cooldown (respect penalty from debuffs if present)
+        penalty = player.get('fire_cooldown_penalty', 0.0) if player.get('fire_cooldown_penalty_timer', 0.0) > 0.0 else 0.0
+        player['fire_timer'] = player.get('fire_cooldown', 0.4) + penalty
 
     def _activate_ult(self, player_idx=0):
         # Activate ultimate for a player: spawn radial high-damage bullets
@@ -522,6 +548,7 @@ class GameScene(BaseScene):
                         for i in range(n):
                             ang = base_ang + (i - (n - 1) / 2.0) * step
                             vel = [math.cos(ang), math.sin(ang)]
+                            # special boss bullet: applies bleed and firing-penalty debuff on hit
                             eb = {
                                 'pos': [bx, by],
                                 'vel': vel,
@@ -530,9 +557,10 @@ class GameScene(BaseScene):
                                 'homing_time': 0.0,
                                 'size': 10,
                                 'special': True,
+                                'special_effect': {'bleed_dps': 3.0, 'bleed_time': 3.0, 'cooldown_penalty': 0.25, 'penalty_time': 5.0},
                             }
                             self.enemy_bullets.append(eb)
-                        e['special_timer'] = 5.0
+                        e['special_timer'] = max(3.0, 5.0 - (self.wave - 1) * 0.1)
 
         # update bullets (homing)
         to_remove = []
@@ -601,6 +629,7 @@ class GameScene(BaseScene):
             for e in list(self.enemies):
                 ex, ey = e['pos']
                 bx, by = b['pos']
+<<<<<<< HEAD
                 # larger hit radius for mage big projectiles
                 hit_radius = 20 if b.get('is_mage_big') else 14
                 if math.hypot(ex - bx, ey - by) < hit_radius:
@@ -664,6 +693,35 @@ class GameScene(BaseScene):
                                     self.enemy_bullets = []
                                     # do not spawn next wave until post-boss timers complete
                                     self._awaiting_next_wave = True
+=======
+                if math.hypot(ex - bx, ey - by) < 14:
+                    # apply damage to enemy (ult bullets do more damage)
+                    owner_idx = b.get('owner')
+                    owner_power = 1.0
+                    if owner_idx is not None and 0 <= owner_idx < len(self.players):
+                        owner_power = self.players[owner_idx].get('weapon_power', 1.0)
+                    base_dmg = 5 if b.get('ult') else 1
+                    dmg = int(base_dmg * owner_power)
+                    e['hp'] = e.get('hp', 1) - dmg
+                    if e['hp'] <= 0:
+                        # if this was a boss, handle phase transition or killed
+                        if e.get('is_boss'):
+                            if e.get('phase', 1) == 1:
+                                # transition to phase 2
+                                e['phase'] = 2
+                                # set new (lower) max hp and refill
+                                new_max = max(8, int(e.get('max_hp', 40) - 10))
+                                e['max_hp'] = new_max
+                                e['hp'] = new_max
+                                # stop summoning minions
+                                e['summon_timer'] = None
+                                # special attack now every 3 seconds
+                                e['special_timer'] = 3.0
+                                # show top-right phase 2 message for 3s
+                                self._phase2_msg_timer = 3.0
+                                # ensure boss continues alive
+                                self._awaiting_next_wave = False
+>>>>>>> 304bef83a0de9cb2609fa4448969ddaefee10e83
                             else:
                                 try:
                                     self.enemies.remove(e)
@@ -675,9 +733,45 @@ class GameScene(BaseScene):
                                         p_owner['ult_charge'] = min(p_owner.get('ult_max', 100), p_owner.get('ult_charge', 0) + gain)
                                 except ValueError:
                                     pass
+<<<<<<< HEAD
                     # remove bullet on hit (for normal/split bullets)
                     if not (b.get('is_mage_big') and not b.get('is_split', False)):
                         to_remove.append(b)
+=======
+                                # clear phase message if any
+                                self._phase2_msg_timer = None
+                                # show slain message for 3s, then pause 5s, then next wave
+                                self._boss_slain_display = 3.0
+                                self._post_boss_pause = None
+                                self.running = False
+                                # clear all bullets and enemy bullets
+                                self.bullets = []
+                                self.enemy_bullets = []
+                                # do not spawn next wave until post-boss timers complete
+                                self._awaiting_next_wave = True
+                                # apply boss-death rewards/effects: restore half hp and boost weapon
+                                for p in self.players:
+                                    maxhp = p.get('max_hp', 100)
+                                    heal = maxhp // 2
+                                    p['hp'] = min(maxhp, p.get('hp', 0) + heal)
+                                    # boost weapon power
+                                    p['weapon_power'] = p.get('weapon_power', 1.0) + 0.5
+                                # add a brief explosion effect at boss position
+                                self._effects.append({'type': 'explosion', 'pos': list(e['pos']), 'timer': 0.6, 'radius': 8})
+                        else:
+                            try:
+                                self.enemies.remove(e)
+                                # award ult charge to the owner of the bullet
+                                owner_idx = b.get('owner')
+                                if owner_idx is not None and 0 <= owner_idx < len(self.players):
+                                    p_owner = self.players[owner_idx]
+                                    gain = 20
+                                    p_owner['ult_charge'] = min(p_owner.get('ult_max', 100), p_owner.get('ult_charge', 0) + gain)
+                            except ValueError:
+                                pass
+                    # remove bullet on hit
+                    to_remove.append(b)
+>>>>>>> 304bef83a0de9cb2609fa4448969ddaefee10e83
                     break
 
             # remove bullets out of bounds
@@ -727,6 +821,13 @@ class GameScene(BaseScene):
                     # increase regular enemy bullet damage to be more threatening (6-9)
                     dmg = 20 if eb.get('boss_bullet') else random.randint(6, 9)
                     p['hp'] = max(0, p.get('hp', 0) - dmg)
+                    # apply special effect debuff (bleed + fire cooldown penalty)
+                    if eb.get('special') and eb.get('special_effect'):
+                        eff = eb['special_effect']
+                        p['bleed_timer'] = max(p.get('bleed_timer', 0.0), eff.get('bleed_time', 0.0))
+                        p['bleed_dps'] = eff.get('bleed_dps', p.get('bleed_dps', 0.0))
+                        p['fire_cooldown_penalty_timer'] = max(p.get('fire_cooldown_penalty_timer', 0.0), eff.get('penalty_time', 0.0))
+                        p['fire_cooldown_penalty'] = eff.get('cooldown_penalty', p.get('fire_cooldown_penalty', 0.0))
                     # if primary player got hit, keep compatibility fields
                     if i == 0:
                         self.hp = p['hp']
@@ -740,7 +841,7 @@ class GameScene(BaseScene):
             if eb in self.enemy_bullets:
                 self.enemy_bullets.remove(eb)
 
-        # update per-player fire timers
+        # update per-player fire timers and debuffs
         for p in self.players:
             if p.get('fire_timer', 0.0) > 0.0:
                 p['fire_timer'] = max(0.0, p['fire_timer'] - dt)
@@ -752,6 +853,19 @@ class GameScene(BaseScene):
                 p['ult_timer'] = max(0.0, p.get('ult_timer', 0.0) - dt)
                 if p['ult_timer'] <= 0.0:
                     p['ult_active'] = False
+            # bleed damage over time
+            if p.get('bleed_timer', 0.0) > 0.0:
+                bleed_dps = p.get('bleed_dps', 0.0)
+                if bleed_dps:
+                    p['hp'] = max(0, p.get('hp', 0) - bleed_dps * dt)
+                    if p is self.player:
+                        self.hp = p['hp']
+                p['bleed_timer'] = max(0.0, p.get('bleed_timer', 0.0) - dt)
+            # cooldown penalty timer
+            if p.get('fire_cooldown_penalty_timer', 0.0) > 0.0:
+                p['fire_cooldown_penalty_timer'] = max(0.0, p.get('fire_cooldown_penalty_timer', 0.0) - dt)
+                if p['fire_cooldown_penalty_timer'] <= 0.0:
+                    p['fire_cooldown_penalty'] = 0.0
 
         # update hurt cooldown
         if self._hurt_cooldown > 0:
@@ -831,6 +945,12 @@ class GameScene(BaseScene):
         if not self.enemies and not self._awaiting_next_wave:
             self.wave += 1
             self._start_game()
+
+        # update effect timers
+        for eff in list(self._effects):
+            eff['timer'] = max(0.0, eff['timer'] - dt)
+            if eff['timer'] <= 0:
+                self._effects.remove(eff)
 
     def render(self, surface):
         if not self.running:
@@ -930,6 +1050,17 @@ class GameScene(BaseScene):
                 pygame.draw.circle(surface, (180, 100, 220), (bx, by), 14)
             else:
                 pygame.draw.circle(surface, (240, 220, 80), (bx, by), 5)
+
+        # draw effects (explosions)
+        for eff in self._effects:
+            if eff['type'] == 'explosion':
+                ex, ey = int(eff['pos'][0]), int(eff['pos'][1])
+                # simple radial blast visual with fading
+                alpha_frac = max(0.0, eff['timer'] / 0.6)
+                # draw expanding rings
+                for ring_idx in range(1, 6):
+                    ring_size = ring_idx * 10
+                    pygame.draw.circle(surface, (255, max(0, 200 - ring_idx * 40), 0), (ex, ey), ring_size, 2)
 
         # HUD - top left
         self.draw_text(surface, f'Player: {self.player_name}  HP: {self.hp}/{self.max_hp}', (14, 8))
