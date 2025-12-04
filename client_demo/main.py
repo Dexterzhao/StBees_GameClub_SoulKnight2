@@ -113,7 +113,16 @@ def main():
 	manager.register('saves', saves)
 
 	manager.goto('login')
-	manager.run()
+	try:
+		manager.run()
+	except Exception:
+		import traceback
+		traceback.print_exc()
+		try:
+			pygame.quit()
+		except Exception:
+			pass
+		sys.exit(1)
 
 
 if __name__ == '__main__':

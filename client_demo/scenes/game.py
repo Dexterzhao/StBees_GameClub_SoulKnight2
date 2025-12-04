@@ -48,6 +48,23 @@ class GameScene(BaseScene):
         if kwargs.get('save'):
             self.state = kwargs['save']
 
+        # handle previous death state: track re-entry count so that
+        # the second time the player enters after a death we start
+        # a fresh game automatically. On the first re-entry we
+        # clear the death timer and show the waiting screen.
+        auto_start_after_death = False
+        if self.state.get('dead'):
+            self.state['dead_entries'] = self.state.get('dead_entries', 0) + 1
+            if self.state['dead_entries'] >= 2:
+                auto_start_after_death = True
+                # reset death markers
+                self.state['dead'] = False
+                self.state['dead_entries'] = 0
+            else:
+                # first re-entry: ensure no lingering death-timer message
+                self.running = False
+                self._death_timer = None
+
         # start running immediately when entering the game (no waiting screen)
         self.running = True
         # character data
@@ -64,9 +81,17 @@ class GameScene(BaseScene):
             new_moves = []
             for i, p in enumerate(self.players):
                 pos = [200.0 + i * 400.0, 300.0]
-                new_players.append({'pos': pos, 'speed': 220.0, 'fire_cooldown': 0.4, 'fire_timer': 0.0, 'hp': 100, 'name': p.get('username', f'Player{i+1}'), 'character': p.get('character')} )
+                # set base HP depending on character (mage is squishier)
+                base_char = p.get('character')
+                if base_char == 'mage':
+                    maxhp = 80
+                else:
+                    maxhp = 100
+                new_players.append({'pos': pos, 'speed': 220.0, 'fire_cooldown': 0.4, 'fire_timer': 0.0, 'hp': maxhp, 'max_hp': maxhp, 'name': p.get('username', f'Player{i+1}'), 'character': p.get('character')} )
                     # add ultimate fields
-                    new_players[-1].update({'ult_charge': 0, 'ult_max': 100, 'ult_active': False, 'ult_timer': 0.0})
+                new_players[-1].update({'ult_charge': 0, 'ult_max': 100, 'ult_active': False, 'ult_timer': 0.0})
+                # mage-specific cooldown for big projectile
+                new_players[-1].update({'mage_cd': 0.0})
                 new_moves.append({'left': False, 'right': False, 'up': False, 'down': False})
             self.players = new_players
             self._move = new_moves
@@ -76,6 +101,24 @@ class GameScene(BaseScene):
         else:
             # fallback single-player structure
             self.player = {'pos': [400.0, 300.0], 'hp': 100, 'max_hp': 100}
+        # if a single-character selection was passed via kwargs, apply it to player 0
+        if getattr(self, 'character', None):
+            try:
+                if isinstance(self.players, list) and len(self.players) > 0:
+                    # set character on player dict if not present
+                    if 'character' not in self.players[0]:
+                        self.players[0]['character'] = self.character
+                        # set name and HP according to character
+                        if self.character == 'mage':
+                            self.players[0]['max_hp'] = 80
+                            self.players[0]['hp'] = 80
+                        else:
+                            self.players[0]['max_hp'] = 100
+                            self.players[0]['hp'] = 100
+                        # mage cooldown field
+                        self.players[0]['mage_cd'] = 0.0
+            except Exception:
+                pass
         # health
         # prefer incoming kwargs, otherwise use primary player's stats
         self.max_hp = int(kwargs.get('max_hp', self.player.get('max_hp', 100)))
@@ -87,7 +130,18 @@ class GameScene(BaseScene):
         # wave management
         self.wave = int(kwargs.get('wave', 1))
         self._respawn_timer = None
-        if self.running:
+        # If this enter was triggered as the "second entry after death",
+        # start a fresh game automatically.
+        if auto_start_after_death:
+            # reset HP to full and start a new wave
+            self.hp = self.max_hp
+            if isinstance(self.players, list):
+                for p in self.players:
+                    p['hp'] = p.get('max_hp', self.max_hp)
+            self._death_timer = None
+            self.running = True
+            self._start_game()
+        elif self.running:
             self._start_game()
 
     def _start_game(self):
@@ -263,6 +317,35 @@ class GameScene(BaseScene):
         if player_idx < 0 or player_idx >= len(self.players):
             return
         p = self.players[player_idx]
+        # Mage has a special big projectile that is on its own cooldown
+        if p.get('character') == 'mage':
+            if p.get('mage_cd', 0.0) > 0.0:
+                return
+            # spawn mage big projectile
+            px, py = p['pos']
+            tgt = self._find_nearest_enemy((px, py))
+            if tgt:
+                tx, ty = tgt['pos']
+                dx, dy = tx - px, ty - py
+                dist = math.hypot(dx, dy) or 1.0
+                vel = [dx / dist, dy / dist]
+            else:
+                vel = [0.0, -1.0]
+            b = {
+                'pos': [px, py],
+                'vel': vel,
+                'speed': 140.0,
+                'is_mage_big': True,
+                'split_timer': 0.2,
+                'kills': 0,
+                'owner': player_idx,
+            }
+            self.bullets.append(b)
+            # set mage cooldown to 8 seconds
+            p['mage_cd'] = 8.0
+            return
+
+        # default behavior: require ult charge and spawn radial ult
         if p.get('ult_active'):
             return
         if p.get('ult_charge', 0) < p.get('ult_max', 100):
@@ -456,6 +539,36 @@ class GameScene(BaseScene):
         # track enemies removed by collisions to avoid double-processing
         enemies_removed = []
         for bi, b in enumerate(self.bullets):
+            # handle mage big-bullet splitting
+            if b.get('is_mage_big'):
+                # decrement split timer
+                b['split_timer'] = b.get('split_timer', 0.0) - dt
+                if b['split_timer'] <= 0.0:
+                    # split into two bullets
+                    bx, by = b['pos']
+                    ang = math.atan2(b['vel'][1], b['vel'][0])
+                    # create two children with spread
+                    spread = 0.6
+                    children = []
+                    for s in (-1, 1):
+                        nang = ang + s * spread
+                        nv = [math.cos(nang), math.sin(nang)]
+                        child = {
+                            'pos': [bx, by],
+                            'vel': nv,
+                            'speed': b.get('speed', 140.0),
+                            'is_mage_big': True,
+                            'split_timer': 0.5,
+                            'kills': 0,
+                            'owner': b.get('owner'),
+                        }
+                        children.append(child)
+                    # add children and remove parent
+                    for c in children:
+                        self.bullets.append(c)
+                    to_remove.append(b)
+                    # skip further processing for this bullet (it was split)
+                    continue
             target = b.get('target')
             if target and target not in self.enemies:
                 # target died or was removed
@@ -488,58 +601,83 @@ class GameScene(BaseScene):
             for e in list(self.enemies):
                 ex, ey = e['pos']
                 bx, by = b['pos']
-                if math.hypot(ex - bx, ey - by) < 14:
-                    # apply damage to enemy (ult bullets do more damage)
-                    dmg = 5 if b.get('ult') else 1
-                    e['hp'] = e.get('hp', 1) - dmg
-                    if e['hp'] <= 0:
-                        # if this was a boss, handle phase transition or killed
-                        if e.get('is_boss'):
-                            if e.get('phase', 1) == 1:
-                                # transition to phase 2
-                                e['phase'] = 2
-                                # set new (lower) max hp and refill
-                                new_max = max(8, int(e.get('max_hp', 40) - 10))
-                                e['max_hp'] = new_max
-                                e['hp'] = new_max
-                                # stop summoning minions
-                                e['summon_timer'] = None
-                                # special attack now every 3 seconds
-                                e['special_timer'] = 3.0
-                                # show top-right phase 2 message for 3s
-                                self._phase2_msg_timer = 3.0
-                                # ensure boss continues alive
-                                self._awaiting_next_wave = False
+                # larger hit radius for mage big projectiles
+                hit_radius = 20 if b.get('is_mage_big') else 14
+                if math.hypot(ex - bx, ey - by) < hit_radius:
+                    # handle mage big-bullet special: original (not yet split) big bullet insta-kills
+                    if b.get('is_mage_big') and not b.get('is_split', False):
+                        # kill the enemy instantly
+                        try:
+                            self.enemies.remove(e)
+                        except ValueError:
+                            pass
+                        # increment kill count on the big bullet; it disappears after 2 kills
+                        b['kills'] = b.get('kills', 0) + 1
+                        if b['kills'] >= 2:
+                            to_remove.append(b)
+                        # mark as split so it won't insta-kill anymore
+                        b['is_split'] = True
+                        # award ult charge to owner for the kill
+                        owner_idx = b.get('owner')
+                        if owner_idx is not None and 0 <= owner_idx < len(self.players):
+                            p_owner = self.players[owner_idx]
+                            gain = 20
+                            p_owner['ult_charge'] = min(p_owner.get('ult_max', 100), p_owner.get('ult_charge', 0) + gain)
+                        # continue to next enemy (do not apply regular damage path)
+                        break
+                    else:
+                        # apply damage to enemy (ult bullets do more damage)
+                        dmg = 5 if b.get('ult') else 1
+                        e['hp'] = e.get('hp', 1) - dmg
+                        if e['hp'] <= 0:
+                            # if this was a boss, handle phase transition or killed
+                            if e.get('is_boss'):
+                                if e.get('phase', 1) == 1:
+                                    # transition to phase 2
+                                    e['phase'] = 2
+                                    # set new (lower) max hp and refill
+                                    new_max = max(8, int(e.get('max_hp', 40) - 10))
+                                    e['max_hp'] = new_max
+                                    e['hp'] = new_max
+                                    # stop summoning minions
+                                    e['summon_timer'] = None
+                                    # special attack now every 3 seconds
+                                    e['special_timer'] = 3.0
+                                    # show top-right phase 2 message for 3s
+                                    self._phase2_msg_timer = 3.0
+                                    # ensure boss continues alive
+                                    self._awaiting_next_wave = False
+                                else:
+                                    # boss killed in phase 2 -> slain sequence
+                                    try:
+                                        self.enemies.remove(e)
+                                    except ValueError:
+                                        pass
+                                    # clear phase message if any
+                                    self._phase2_msg_timer = None
+                                    # show slain message for 3s, then pause 5s, then next wave
+                                    self._boss_slain_display = 3.0
+                                    self._post_boss_pause = None
+                                    self.running = False
+                                    # clear all bullets and enemy bullets
+                                    self.bullets = []
+                                    self.enemy_bullets = []
+                                    # do not spawn next wave until post-boss timers complete
+                                    self._awaiting_next_wave = True
                             else:
-                                # boss killed in phase 2 -> slain sequence
                                 try:
                                     self.enemies.remove(e)
+                                    # award ult charge to the owner of the bullet
+                                    owner_idx = b.get('owner')
+                                    if owner_idx is not None and 0 <= owner_idx < len(self.players):
+                                        p_owner = self.players[owner_idx]
+                                        gain = 20
+                                        p_owner['ult_charge'] = min(p_owner.get('ult_max', 100), p_owner.get('ult_charge', 0) + gain)
                                 except ValueError:
                                     pass
-                                # clear phase message if any
-                                self._phase2_msg_timer = None
-                                # show slain message for 3s, then pause 5s, then next wave
-                                self._boss_slain_display = 3.0
-                                self._post_boss_pause = None
-                                self.running = False
-                                # clear all bullets and enemy bullets
-                                self.bullets = []
-                                self.enemy_bullets = []
-                                # do not spawn next wave until post-boss timers complete
-                                self._awaiting_next_wave = True
-                        else:
-                            try:
-                                self.enemies.remove(e)
-                                # award ult charge to the owner of the bullet
-                                owner_idx = b.get('owner')
-                                if owner_idx is not None and 0 <= owner_idx < len(self.players):
-                                    p_owner = self.players[owner_idx]
-                                    gain = 20
-                                    p_owner['ult_charge'] = min(p_owner.get('ult_max', 100), p_owner.get('ult_charge', 0) + gain)
-                            except ValueError:
-                                pass
-                    # remove bullet on hit
-                    to_remove.append(b)
+                    # remove bullet on hit (for normal/split bullets)
+                    if not (b.get('is_mage_big') and not b.get('is_split', False)):
+                        to_remove.append(b)
                     break
 
             # remove bullets out of bounds
@@ -586,7 +724,8 @@ class GameScene(BaseScene):
                 px, py = p['pos']
                 if math.hypot(px - bx, py - by) < 12:
                     # boss bullets deal heavy damage, regular enemy bullets deal 2 HP
-                    dmg = 20 if eb.get('boss_bullet') else 2
+                    # increase regular enemy bullet damage to be more threatening (6-9)
+                    dmg = 20 if eb.get('boss_bullet') else random.randint(6, 9)
                     p['hp'] = max(0, p.get('hp', 0) - dmg)
                     # if primary player got hit, keep compatibility fields
                     if i == 0:
@@ -605,6 +744,9 @@ class GameScene(BaseScene):
         for p in self.players:
             if p.get('fire_timer', 0.0) > 0.0:
                 p['fire_timer'] = max(0.0, p['fire_timer'] - dt)
+            # mage special cooldown
+            if p.get('mage_cd', 0.0) > 0.0:
+                p['mage_cd'] = max(0.0, p.get('mage_cd', 0.0) - dt)
             # update ult timers
             if p.get('ult_active'):
                 p['ult_timer'] = max(0.0, p.get('ult_timer', 0.0) - dt)
@@ -653,6 +795,14 @@ class GameScene(BaseScene):
         if self.hp <= 0 and self._death_timer is None:
             self._death_timer = 1.5
             self.running = False
+            # persist death state so re-enter behavior can react
+            try:
+                self.state['dead'] = True
+                # reset entry counter; first re-entry will be counted as 1
+                self.state['dead_entries'] = 0
+            except Exception:
+                # ensure state exists
+                self.state = {'dead': True, 'dead_entries': 0}
 
         # if boss was slain earlier and awaiting pause, handle timers
         if self._boss_slain_display is not None:
@@ -698,33 +848,47 @@ class GameScene(BaseScene):
         # draw players (support split-screen players list)
         for idx, p in enumerate(self.players):
             px, py = p['pos']
-            color = (50, 160, 220) if idx == 0 else (80, 200, 120)
+            # color by character: mage gets pink-purple, otherwise default colors
+            if p.get('character') == 'mage':
+                color = (220, 140, 200)
+            else:
+                color = (50, 160, 220) if idx == 0 else (80, 200, 120)
             pygame.draw.circle(surface, color, (int(px), int(py)), 12)
-            # draw player name and hp bar above player
+            # Draw player UI above the player's head (do not overlap the player)
+            # layout from top -> down: name, hp bar, ult bar, then player
             name = p.get('name', f'Player{idx+1}')
+            # offsets chosen to leave clear gap above player's circle (radius 12)
+            name_y = int(py - 56)
+            hp_bar_y = int(py - 44)
+            ult_bar_y = int(py - 34)
+
+            # render name centered
             name_surf = self.font.render(name, True, (255, 255, 255))
-            nsr = name_surf.get_rect(center=(int(px), int(py) - 26))
+            nsr = name_surf.get_rect(center=(int(px), name_y))
             surface.blit(name_surf, nsr)
-            # hp bar
+
+            # hp bar (under name)
             bar_w = 60
             bar_h = 8
             hp = p.get('hp', 100)
             maxhp = p.get('max_hp', 100)
             hp_frac = max(0.0, min(1.0, float(hp) / float(maxhp)))
             bar_x = int(px - bar_w/2)
-            bar_y = int(py - 16)
-            pygame.draw.rect(surface, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
-            pygame.draw.rect(surface, (180, 30, 30), (bar_x + 1, bar_y + 1, int((bar_w - 2) * hp_frac), bar_h - 2))
-            # ult meter under hp bar
+            pygame.draw.rect(surface, (40, 40, 40), (bar_x, hp_bar_y, bar_w, bar_h))
+            pygame.draw.rect(surface, (180, 30, 30), (bar_x + 1, hp_bar_y + 1, int((bar_w - 2) * hp_frac), bar_h - 2))
+
+            # ult meter (under hp bar)
             ult_w = 60
             ult_h = 6
             ult_frac = max(0.0, min(1.0, float(p.get('ult_charge', 0)) / float(p.get('ult_max', 100))))
             ult_x = int(px - ult_w/2)
-            ult_y = int(py - 6)
-            pygame.draw.rect(surface, (30, 30, 30), (ult_x, ult_y, ult_w, ult_h))
-            pygame.draw.rect(surface, (60, 200, 220), (ult_x + 1, ult_y + 1, int((ult_w - 2) * ult_frac), ult_h - 2))
+            pygame.draw.rect(surface, (30, 30, 30), (ult_x, ult_bar_y, ult_w, ult_h))
+            pygame.draw.rect(surface, (60, 200, 220), (ult_x + 1, ult_bar_y + 1, int((ult_w - 2) * ult_frac), ult_h - 2))
+
+            # small ULT! indicator to the right of name when active
             if p.get('ult_active'):
-                self.draw_text(surface, 'ULT!', (px, py - 36))
+                # place it near the name, offset to avoid overlap
+                self.draw_text(surface, 'ULT!', (px + (bar_w // 2) + 10, name_y), center=False)
 
         # draw enemies
         for e in self.enemies:
@@ -761,7 +925,11 @@ class GameScene(BaseScene):
         # draw bullets
         for b in self.bullets:
             bx, by = int(b['pos'][0]), int(b['pos'][1])
-            pygame.draw.circle(surface, (240, 220, 80), (bx, by), 5)
+            # mage big bullets are larger and non-homing (render larger)
+            if b.get('is_mage_big'):
+                pygame.draw.circle(surface, (180, 100, 220), (bx, by), 14)
+            else:
+                pygame.draw.circle(surface, (240, 220, 80), (bx, by), 5)
 
         # HUD - top left
         self.draw_text(surface, f'Player: {self.player_name}  HP: {self.hp}/{self.max_hp}', (14, 8))
