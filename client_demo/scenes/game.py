@@ -72,7 +72,7 @@ class GameScene(BaseScene):
         # character data
         self.character = kwargs.get('character')
         self.character_label = kwargs.get('character_label', getattr(self, 'character', 'Player'))
-        # player display name (from login/menu) — show above player
+        # player display name (from login/menu)  show above player
         self.player_name = kwargs.get('username', getattr(self, 'player_name', 'Player'))
         # 2-player data
         self.players = kwargs.get('players', None) or self.players
@@ -83,7 +83,6 @@ class GameScene(BaseScene):
             new_moves = []
             for i, p in enumerate(self.players):
                 pos = [200.0 + i * 400.0, 300.0]
-<<<<<<< HEAD
                 # set base HP depending on character (mage is squishier)
                 base_char = p.get('character')
                 if base_char == 'mage':
@@ -95,11 +94,6 @@ class GameScene(BaseScene):
                 new_players[-1].update({'ult_charge': 0, 'ult_max': 100, 'ult_active': False, 'ult_timer': 0.0})
                 # mage-specific cooldown for big projectile
                 new_players[-1].update({'mage_cd': 0.0})
-=======
-                new_players.append({'pos': pos, 'speed': 220.0, 'fire_cooldown': 0.4, 'fire_timer': 0.0, 'hp': p.get('hp', 100), 'max_hp': p.get('max_hp', 100), 'weapon_power': p.get('weapon_power', 1.0), 'name': p.get('username', f'Player{i+1}'), 'character': p.get('character')} )
-                # add ultimate fields
-                new_players[-1].update({'ult_charge': 0, 'ult_max': 100, 'ult_active': False, 'ult_timer': 0.0})
->>>>>>> 304bef83a0de9cb2609fa4448969ddaefee10e83
                 new_moves.append({'left': False, 'right': False, 'up': False, 'down': False})
             self.players = new_players
             self._move = new_moves
@@ -629,7 +623,6 @@ class GameScene(BaseScene):
             for e in list(self.enemies):
                 ex, ey = e['pos']
                 bx, by = b['pos']
-<<<<<<< HEAD
                 # larger hit radius for mage big projectiles
                 hit_radius = 20 if b.get('is_mage_big') else 14
                 if math.hypot(ex - bx, ey - by) < hit_radius:
@@ -693,35 +686,6 @@ class GameScene(BaseScene):
                                     self.enemy_bullets = []
                                     # do not spawn next wave until post-boss timers complete
                                     self._awaiting_next_wave = True
-=======
-                if math.hypot(ex - bx, ey - by) < 14:
-                    # apply damage to enemy (ult bullets do more damage)
-                    owner_idx = b.get('owner')
-                    owner_power = 1.0
-                    if owner_idx is not None and 0 <= owner_idx < len(self.players):
-                        owner_power = self.players[owner_idx].get('weapon_power', 1.0)
-                    base_dmg = 5 if b.get('ult') else 1
-                    dmg = int(base_dmg * owner_power)
-                    e['hp'] = e.get('hp', 1) - dmg
-                    if e['hp'] <= 0:
-                        # if this was a boss, handle phase transition or killed
-                        if e.get('is_boss'):
-                            if e.get('phase', 1) == 1:
-                                # transition to phase 2
-                                e['phase'] = 2
-                                # set new (lower) max hp and refill
-                                new_max = max(8, int(e.get('max_hp', 40) - 10))
-                                e['max_hp'] = new_max
-                                e['hp'] = new_max
-                                # stop summoning minions
-                                e['summon_timer'] = None
-                                # special attack now every 3 seconds
-                                e['special_timer'] = 3.0
-                                # show top-right phase 2 message for 3s
-                                self._phase2_msg_timer = 3.0
-                                # ensure boss continues alive
-                                self._awaiting_next_wave = False
->>>>>>> 304bef83a0de9cb2609fa4448969ddaefee10e83
                             else:
                                 try:
                                     self.enemies.remove(e)
@@ -733,45 +697,9 @@ class GameScene(BaseScene):
                                         p_owner['ult_charge'] = min(p_owner.get('ult_max', 100), p_owner.get('ult_charge', 0) + gain)
                                 except ValueError:
                                     pass
-<<<<<<< HEAD
                     # remove bullet on hit (for normal/split bullets)
                     if not (b.get('is_mage_big') and not b.get('is_split', False)):
                         to_remove.append(b)
-=======
-                                # clear phase message if any
-                                self._phase2_msg_timer = None
-                                # show slain message for 3s, then pause 5s, then next wave
-                                self._boss_slain_display = 3.0
-                                self._post_boss_pause = None
-                                self.running = False
-                                # clear all bullets and enemy bullets
-                                self.bullets = []
-                                self.enemy_bullets = []
-                                # do not spawn next wave until post-boss timers complete
-                                self._awaiting_next_wave = True
-                                # apply boss-death rewards/effects: restore half hp and boost weapon
-                                for p in self.players:
-                                    maxhp = p.get('max_hp', 100)
-                                    heal = maxhp // 2
-                                    p['hp'] = min(maxhp, p.get('hp', 0) + heal)
-                                    # boost weapon power
-                                    p['weapon_power'] = p.get('weapon_power', 1.0) + 0.5
-                                # add a brief explosion effect at boss position
-                                self._effects.append({'type': 'explosion', 'pos': list(e['pos']), 'timer': 0.6, 'radius': 8})
-                        else:
-                            try:
-                                self.enemies.remove(e)
-                                # award ult charge to the owner of the bullet
-                                owner_idx = b.get('owner')
-                                if owner_idx is not None and 0 <= owner_idx < len(self.players):
-                                    p_owner = self.players[owner_idx]
-                                    gain = 20
-                                    p_owner['ult_charge'] = min(p_owner.get('ult_max', 100), p_owner.get('ult_charge', 0) + gain)
-                            except ValueError:
-                                pass
-                    # remove bullet on hit
-                    to_remove.append(b)
->>>>>>> 304bef83a0de9cb2609fa4448969ddaefee10e83
                     break
 
             # remove bullets out of bounds
